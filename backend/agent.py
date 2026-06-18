@@ -1,5 +1,5 @@
 """
-Data Analyst Agent - Simplified implementation compatible with installed langchain version
+Data Analyst Agent - Supports Groq (primary) with OpenAI fallback
 """
 import json
 import logging
@@ -10,8 +10,6 @@ from datetime import datetime
 import pandas as pd
 import numpy as np
 import plotly.express as px
-
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config import config
@@ -28,13 +26,34 @@ class DataAnalystAgent:
     """Data Analyst Agent - processes natural language questions about data"""
 
     def __init__(self):
-        """Initialize the agent"""
+        """Initialize the agent - prefers Groq, falls back to OpenAI"""
+        self.db_manager = get_db_manager()
+
+        # Use Groq if API key is configured
+        if config.GROQ_API_KEY and not config.GROQ_API_KEY.startswith("gsk_YOUR"):
+            try:
+                from langchain_groq import ChatGroq
+                self.llm = ChatGroq(
+                    model=config.GROQ_MODEL,
+                    temperature=config.LLM_TEMPERATURE,
+                    api_key=config.GROQ_API_KEY
+                )
+                logger.info(f"✓ Using Groq LLM (model: {config.GROQ_MODEL})")
+            except Exception as e:
+                logger.warning(f"Failed to init ChatGroq: {e}, falling back to OpenAI")
+                self._init_openai()
+        else:
+            self._init_openai()
+
+    def _init_openai(self):
+        """Initialize with OpenAI fallback"""
+        from langchain_openai import ChatOpenAI
         self.llm = ChatOpenAI(
             model=config.OPENAI_MODEL,
             temperature=config.LLM_TEMPERATURE,
             api_key=config.OPENAI_API_KEY
         )
-        self.db_manager = get_db_manager()
+        logger.info(f"Using OpenAI LLM (model: {config.OPENAI_MODEL})")
 
     async def analyze(
         self,
@@ -98,8 +117,6 @@ class DataAnalystAgent:
 
     def _generate_sql(self, question: str) -> SQLGeneration:
         """Generate SQL from natural language question using LLM"""
-
-        # Get schema context
         schema = self.db_manager.get_schema()
         schema_str = json.dumps(schema, indent=2)
 
@@ -119,8 +136,6 @@ Generate a safe, efficient SQL query. Respond with ONLY valid SQL, no explanatio
             ])
 
             sql = response.content.strip()
-
-            # Remove markdown formatting if present
             if sql.startswith("```"):
                 sql = sql.split("```")[1]
                 if sql.startswith("sql"):
@@ -140,36 +155,36 @@ Generate a safe, efficient SQL query. Respond with ONLY valid SQL, no explanatio
 
     def _fallback_sql_generation(self, question: str) -> str:
         """Fallback SQL generation when LLM is unavailable"""
-        question_lower = question.lower()
+        q = question.lower()
 
-        if "total" in question_lower and "revenue" in question_lower:
-            if "category" in question_lower:
+        if "total" in q and "revenue" in q:
+            if "category" in q:
                 return ("SELECT p.category, SUM(s.revenue) as total_revenue, COUNT(*) as transactions "
                         "FROM sales s JOIN products p ON s.product_id = p.id "
                         "GROUP BY p.category ORDER BY total_revenue DESC LIMIT 10")
-            if "product" in question_lower:
+            if "product" in q:
                 return ("SELECT p.name, SUM(s.revenue) as total_revenue, SUM(s.quantity) as total_quantity "
                         "FROM sales s JOIN products p ON s.product_id = p.id "
                         "GROUP BY p.id, p.name ORDER BY total_revenue DESC LIMIT 10")
-            if "segment" in question_lower:
+            if "segment" in q:
                 return ("SELECT s.segment, SUM(s.revenue) as total_revenue, COUNT(*) as transaction_count "
                         "FROM sales s GROUP BY s.segment ORDER BY total_revenue DESC")
             return "SELECT SUM(revenue) as total_revenue FROM sales"
 
-        if "sales" in question_lower and ("date" in question_lower or "daily" in question_lower or "trend" in question_lower or "day" in question_lower):
+        if "sales" in q and ("date" in q or "daily" in q or "trend" in q or "day" in q):
             return ("SELECT s.date, SUM(s.revenue) as daily_revenue, SUM(s.quantity) as daily_quantity "
                     "FROM sales s GROUP BY s.date ORDER BY s.date ASC")
 
-        if "top" in question_lower and "product" in question_lower:
+        if "top" in q and "product" in q:
             return ("SELECT p.name, SUM(s.revenue) as total_revenue, SUM(s.quantity) as total_quantity "
                     "FROM sales s JOIN products p ON s.product_id = p.id "
                     "GROUP BY p.id, p.name ORDER BY total_revenue DESC LIMIT 5")
 
-        if "average" in question_lower and "price" in question_lower:
+        if "average" in q and "price" in q:
             return ("SELECT category, AVG(price) as avg_price, COUNT(*) as product_count "
                     "FROM products GROUP BY category ORDER BY avg_price DESC")
 
-        if "segment" in question_lower:
+        if "segment" in q:
             return ("SELECT segment, COUNT(*) as customer_count, SUM(revenue) as total_revenue "
                     "FROM sales GROUP BY segment ORDER BY total_revenue DESC")
 
@@ -199,19 +214,11 @@ Generate a safe, efficient SQL query. Respond with ONLY valid SQL, no explanatio
                 error=result.get("error")
             )
 
-    def _create_visualization(
-        self,
-        question: str,
-        data: List[Dict]
-    ) -> Optional[Visualization]:
+    def _create_visualization(self, question: str, data: List[Dict]) -> Optional[Visualization]:
         """Create visualization from data"""
         try:
             df = pd.DataFrame(data)
-
-            # Determine chart type based on data shape and question
             chart_type = self._select_chart_type(question, df)
-
-            # Determine axes
             numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
             non_numeric_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
 
@@ -224,7 +231,6 @@ Generate a safe, efficient SQL query. Respond with ONLY valid SQL, no explanatio
             else:
                 return None
 
-            # Create Plotly figure
             if chart_type == ChartType.BAR:
                 fig = px.bar(df, x=x_key, y=y_key)
             elif chart_type == ChartType.LINE:
@@ -236,85 +242,54 @@ Generate a safe, efficient SQL query. Respond with ONLY valid SQL, no explanatio
             else:
                 fig = px.bar(df, x=x_key, y=y_key)
 
-            html = fig.to_html()
-
             return Visualization(
                 type=chart_type,
                 title=f"Analysis: {question[:50]}...",
-                x_axis=x_key,
-                y_axis=y_key,
-                x_key=x_key,
-                y_key=y_key,
-                interactive_html=html
+                x_axis=x_key, y_axis=y_key,
+                x_key=x_key, y_key=y_key,
+                interactive_html=fig.to_html()
             )
-
         except Exception as e:
             logger.warning(f"Visualization creation failed: {e}")
             return None
 
     def _select_chart_type(self, question: str, df: pd.DataFrame) -> ChartType:
-        """Select appropriate chart type based on question and data"""
-        question_lower = question.lower()
-
-        if any(word in question_lower for word in ["trend", "over time", "daily", "weekly", "monthly"]):
+        q = question.lower()
+        if any(w in q for w in ["trend", "over time", "daily", "weekly", "monthly"]):
             return ChartType.LINE
-
-        if any(word in question_lower for word in ["distribution", "proportion", "breakdown", "percentage"]):
+        if any(w in q for w in ["distribution", "proportion", "breakdown", "percentage"]):
             return ChartType.PIE
-
-        if any(word in question_lower for word in ["cumulative", "stacked"]):
+        if any(w in q for w in ["cumulative", "stacked"]):
             return ChartType.AREA
-
         return ChartType.BAR
 
-    def _generate_interpretation(
-        self,
-        question: str,
-        rows: List[Dict],
-        sql_generation: SQLGeneration
-    ) -> Interpretation:
+    def _generate_interpretation(self, question: str, rows: List[Dict], sql_generation: SQLGeneration) -> Interpretation:
         """Generate interpretation of results"""
-
         if not rows:
             return Interpretation(
                 summary="No data found matching your query.",
-                key_metrics={},
-                patterns=[],
-                anomalies=[],
+                key_metrics={}, patterns=[], anomalies=[],
                 recommendations=[],
                 next_steps=["Try refining your question with different criteria"],
                 confidence=0.0
             )
 
-        # Generate interpretation programmatically
         df = pd.DataFrame(rows)
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-
-        summary_parts = []
-        patterns = []
-        anomalies = []
-        recommendations = []
-
-        # Build summary and patterns from data
-        summary_parts.append(f"Analysis of {len(rows)} records completed.")
+        summary_parts = [f"Analysis of {len(rows)} records completed."]
+        patterns, anomalies, recommendations = [], [], []
 
         if numeric_cols:
-            for col in numeric_cols[:3]:  # Limit to first 3 numeric columns
+            for col in numeric_cols[:3]:
                 total = df[col].sum()
                 avg = df[col].mean()
                 mx = df[col].max()
                 mn = df[col].min()
-
-                summary_parts.append(
-                    f"Total {col}: {total:,.0f} (avg: {avg:,.0f}, range: {mn:,.0f} - {mx:,.0f})."
-                )
-
-                # Detect patterns
+                summary_parts.append(f"Total {col}: {total:,.0f} (avg: {avg:,.0f}, range: {mn:,.0f} - {mx:,.0f}).")
                 if mx > avg * 1.5:
                     patterns.append(f"High variance in {col} with peaks exceeding average by more than 50%")
                     anomalies.append(f"Some {col} values are significantly above the average")
 
-            # Generate recommendations
             if "revenue" in str(numeric_cols).lower():
                 recommendations.append("Focus on top-performing categories to maximize revenue growth")
                 recommendations.append("Consider analyzing low-performing segments for improvement opportunities")
@@ -331,14 +306,9 @@ Generate a safe, efficient SQL query. Respond with ONLY valid SQL, no explanatio
 
         summary = " ".join(summary_parts)
 
-        # Try LLM enhancement if available
+        # Try LLM enhancement
         try:
-            data_summary = {
-                "row_count": len(df),
-                "columns": df.columns.tolist(),
-                "sample_data": rows[:5]
-            }
-
+            data_summary = {"row_count": len(df), "columns": df.columns.tolist(), "sample_data": rows[:5]}
             prompt = f"""Analyze this data and provide a brief insight:
 
 Question: {question}
@@ -359,40 +329,32 @@ Provide a professional analysis in JSON format:
                 SystemMessage(content="You are an expert business analyst."),
                 HumanMessage(content=prompt)
             ])
-
             content = response.content
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0]
-
-            interpretation_data = json.loads(content)
-
+            data = json.loads(content)
             return Interpretation(
-                summary=interpretation_data.get("summary", summary),
-                key_metrics=interpretation_data.get("key_metrics", {}),
-                patterns=interpretation_data.get("patterns", patterns),
-                anomalies=interpretation_data.get("anomalies", anomalies),
-                recommendations=interpretation_data.get("recommendations", recommendations),
-                next_steps=interpretation_data.get("next_steps", next_steps),
+                summary=data.get("summary", summary),
+                key_metrics=data.get("key_metrics", {}),
+                patterns=data.get("patterns", patterns),
+                anomalies=data.get("anomalies", anomalies),
+                recommendations=data.get("recommendations", recommendations),
+                next_steps=data.get("next_steps", next_steps),
                 confidence=0.90
             )
-
         except Exception as e:
-            logger.warning(f"LLM interpretation failed: {e}, using programmatic interpretation")
-
+            logger.warning(f"LLM interpretation failed: {e}, using programmatic")
             key_metrics = {}
             if numeric_cols:
                 for col in numeric_cols[:5]:
                     key_metrics[f"total_{col}"] = float(df[col].sum())
                     key_metrics[f"avg_{col}"] = float(df[col].mean())
-
             return Interpretation(
-                summary=summary,
-                key_metrics=key_metrics,
-                patterns=patterns if patterns else ["Standard distribution across records"],
-                anomalies=anomalies if anomalies else ["No significant anomalies detected"],
-                recommendations=recommendations if recommendations else ["Review the visualization for detailed insights"],
-                next_steps=next_steps,
-                confidence=0.7
+                summary=summary, key_metrics=key_metrics,
+                patterns=patterns or ["Standard distribution across records"],
+                anomalies=anomalies or ["No significant anomalies detected"],
+                recommendations=recommendations or ["Review the visualization for detailed insights"],
+                next_steps=next_steps, confidence=0.7
             )
 
 

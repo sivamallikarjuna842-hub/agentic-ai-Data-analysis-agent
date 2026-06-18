@@ -27,10 +27,14 @@ class Config:
     SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", str(BACKEND_DIR / "analytics.db"))
     DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{SQLITE_DB_PATH}")
     
-    # LLM Settings
+    # LLM Settings (OpenAI fallback)
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4")
     LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", 0.0))
+    
+    # Groq Settings (primary LLM)
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL = os.getenv("GROQ_MODEL", "llama3-70b-8192")
     
     # LangChain Settings
     LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY", "")
