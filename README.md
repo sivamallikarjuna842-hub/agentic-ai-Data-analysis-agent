@@ -1,6 +1,16 @@
 # 🤖 Autonomous Data Analyst Agent
 
 > **Natural Language → SQL → Insights** — A full-stack application that lets you ask questions about your data in plain English and get back interactive visualizations, analysis, and recommendations.
+>  <img width="960" height="441" alt="Screenshot 2026-06-18 102741" src="https://github.com/user-attachments/assets/0e11296a-0fcc-4360-99a3-671bf98d9486" />
+
+<img width="959" height="442" alt="Screenshot 2026-06-18 141629" src="https://github.com/user-attachments/assets/61e3cad1-ec2c-4db8-adb9-735be7cee6e8" />
+
+<img width="925" height="258" alt="Screenshot 2026-06-18 141917" src="https://github.com/user-attachments/assets/3395d777-9eb1-4787-a656-59662c676dbb" />
+
+<img width="935" height="358" alt="Screenshot 2026-06-18 141938" src="https://github.com/user-attachments/assets/07ad7872-f3d6-4c1f-813f-d6847ba79a09" />
+
+
+
 
 [![Backend](https://img.shields.io/badge/Backend-FastAPI-009688?logo=fastapi)](backend/)
 [![Frontend](https://img.shields.io/badge/Frontend-React-61DAFB?logo=react)](src/)
